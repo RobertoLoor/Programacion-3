@@ -7,13 +7,8 @@ NOMBRE: Roberto Carlos
 @author Roberto Loor
 */
 
-import java.util.Arrays; /**Importamos la clase Arrays para poder utilizar sus métodos.*/
+import java.util.Arrays; 
 
-/**
-La clase Coordinate se encarga de almacenar un conjunto de componentes, y realizar comparaciones sobre ellos, 
-así como también de obtener la cantidad de componentes almacenados, y el valor de los componentes.
-Así mismo, cabe resaltar que al ser una clase creada para ser inmutable, una vez creada, no se puede modificar.
-*/
 final class Coordinate {
     private final double[] components;
   
