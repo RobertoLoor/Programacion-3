@@ -1,0 +1,1708 @@
+package es.ua.dlsi.prog3.p6.algorithms;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.util.List;
+
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.Node;
+import es.ua.dlsi.prog3.p6.graph.NodeNotFoundException;
+
+/**
+ * Facade class giving easy input to the available algorithms from the library
+ * @author drizo
+ */
+public class Algorithms {
+	/**
+	 * Returns a Depth First Search traversal of the graph starting with the provided node
+	 * @param graph Graph to work on
+	 * @param fromNode starting node
+	 * @return List of visited nodes
+	 */
+	public static List<Node> dfs(Graph graph, Node fromNode) {
+		DFS dfs = new DFS(graph);
+		dfs.run(fromNode);
+		return dfs.getVisitSequence();
+	}
+
+	/**
+	 * It computes the cost to traverse from the source node to the target one
+	 * @param graph Graph to work on
+	 * @param fromNode Source node
+	 * @param toNode Target node
+	 * @return Cost
+	 * @throws NodeNotFoundException Thrown if any of the nodes do not belong to the graph 
+	 * @throws GraphAlgorithmException Thrown if the graph has no edges
+	 */
+	public static int shortestPathCost(Graph graph, Node fromNode, Node toNode) throws NodeNotFoundException, GraphAlgorithmException {
+		DijkstraShortestPath dijkstraShortestPath = new DijkstraShortestPath(graph);
+		dijkstraShortestPath.compute(fromNode);
+
+		// this is not the most efficient method, but it's what we have available
+		if (!graph.contains(toNode)) {
+			throw new NodeNotFoundException(toNode);
+		}
+		
+		Integer distance = dijkstraShortestPath.getComputedDistances().get(toNode);
+		if (distance == null) {
+			throw new GraphAlgorithmException("Cannot find a distance to the target node " + toNode);
+		}
+				
+		return distance;
+	}
+	
+	/**
+	 * It exports the graph to a file using the Graphviz Dot format
+	 * @param file Output file
+	 * @param graph Graph to be exported
+	 * @throws FileNotFoundException Thrown when the file to be written does not exist (maybe because its folder does not exist)
+	 */
+	public static void exportDot(File file, Graph graph) throws FileNotFoundException {
+		DotExporter dotExporter = new DotExporter();
+		dotExporter.export(file, graph);
+	}
+}
+package es.ua.dlsi.prog3.p6.algorithms;
+
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
+
+import es.ua.dlsi.prog3.p6.graph.Edge;
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.Node;
+import es.ua.dlsi.prog3.p6.graph.NodeNotFoundException;
+
+/**
+ * Depth-first search algorithm. The algorithm starts at the root node 
+ * (selecting some arbitrary node as the root node in the case of a graph) 
+ * and explores as far as possible along each branch before backtracking.  
+ * çSo the basic idea is to start from the root or any arbitrary node and mark 
+ * the node and move to the adjacent unmarked node and continue this loop until 
+ * there is no unmarked adjacent node. 
+ * Then backtrack and check for other unmarked nodes and traverse them. 
+ * Finally, print the nodes in the path.
+ * Package visibility for force clients using the facade Algorithms class
+ * (see https://www.geeksforgeeks.org/depth-first-search-or-dfs-for-a-graph/)
+ * @author drizo
+ */
+class DFS {
+	/**
+	 * Graph to perform the DFS
+	 */
+	private final Graph graph;
+	/**
+	 * Using a set to speed up search
+	 */
+	private Set<Node> visited;
+	/**
+	 * Ordered list of visited nodes 
+	 */
+	private List<Node> visitSequence;
+	
+	/**
+	 * It initializes the structures required for the DFS algorithm 
+	 * @param graph Graph to run the DFS
+	 */
+	public DFS(Graph graph) {
+		this.graph = graph;
+		visited = new HashSet<>();
+		this.visitSequence = new LinkedList<>();
+	}
+
+	/**
+	 * It traverses the graph from the given node
+	 * @param node Current node
+	 */
+	public void run(Node node) {
+		visited.add(node);
+		visitSequence.add(node);
+		// Recur for all the vertices adjacent to this
+		try {
+			Set<Edge> outEdges = graph.getEdgesConnectedTo(node);
+				for (Edge edge: outEdges) {
+				if (!visited.contains(edge.getTarget())) {
+					run(edge.getTarget());
+				}
+			}
+		} catch (NodeNotFoundException e) {
+			throw new RuntimeException(e); // this can only happen if the node does not belong to the graph, and we are traversing the nodes of the graph
+		}
+	}
+
+	/**
+	 * Result deep copy of the traversal
+	 * @return List of visited nodes
+	 */
+	public List<Node> getVisitSequence() {
+		LinkedList<Node> result = new LinkedList<>();
+		for (Node node: visitSequence) {
+			result.add(new Node(node));
+		}
+		return result;
+	}
+	
+	
+}
+package es.ua.dlsi.prog3.p6.algorithms;
+
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Set;
+
+import es.ua.dlsi.prog3.p6.graph.Edge;
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.Node;
+import es.ua.dlsi.prog3.p6.graph.NodeNotFoundException;
+
+/**
+ * Dijkstra’s shortest path using a PriorityQueue.
+ * Implementation based on https://www.geeksforgeeks.org/dijkstras-shortest-path-algorithm-in-java-using-priorityqueue/
+ * Package visibility for force clients using the facade Algorithms class
+ * @author drizo
+ */
+class DijkstraShortestPath {
+	/**
+	 * Helper class implementing Comparator interface
+	 */
+	class Cost implements Comparator<Cost> {	 
+		/**
+		 * Node
+		 */
+	    Node node;
+	    /**
+	     * Cost
+	     */
+	    int cost;
+	 
+	    /**
+	     * Default constructor
+	     */
+	    Cost() {	    	
+	    }
+	 
+	    /**
+	     * Constructor using fields
+	     * @param node Node
+	     * @param cost Cost
+	     */
+	    Cost(Node node, int cost)
+	    {
+	        this.node = node;
+	        this.cost = cost;
+	    }
+	 
+	    @Override 
+	    public int compare(Cost node1, Cost node2)
+	    {	 
+	        if (node1.cost < node2.cost) {
+	            return -1;
+	        }
+	 
+	        if (node1.cost > node2.cost) {
+	            return 1;
+	        }
+	 
+	        return 0;
+	    }
+	}
+	
+	/**
+	 * Graph to work on
+	 */
+	private final Graph graph;
+	
+	/**
+	 * Distances
+	 */
+	private Map<Node, Integer> dist;
+
+	/**
+	 * Settled nodes
+	 */
+    private Set<Node> settled;
+
+	/**
+	 * Priority queue for the implementation of the Dijkstra's algorithm
+	 */
+	private PriorityQueue<Cost> priorityQueue;
+
+	/**
+	 * Constructor
+	 * @param graph Graph to work on
+	 */
+	public DijkstraShortestPath(Graph graph) {
+		this.graph = graph;
+	}
+	
+	/**
+	 * It initializes the local structures and computes the shortest path
+	 * @param fromNode Source node
+	 * @throws NodeNotFoundException 
+	 */
+	public void compute(Node fromNode) throws NodeNotFoundException {
+		if (!graph.contains(fromNode)) {
+			throw new NodeNotFoundException(fromNode);
+		}
+		this.dist = new HashMap<>();
+		this.settled = new HashSet<>();
+		this.priorityQueue = new PriorityQueue<Cost>(graph.getSize(), new Cost());
+		for (Node n: graph.getNodes()) {
+			dist.put(n, Integer.MAX_VALUE);
+		}
+		
+        // Add source node to the priority queue
+        priorityQueue.add(new Cost(fromNode, 0));
+ 
+        // Distance to the source is 0
+        dist.put(fromNode, 0);
+ 
+        while (settled.size() != graph.getSize()) {
+ 
+            // Terminating condition check when
+            // the priority queue is empty, return
+            if (priorityQueue.isEmpty()) {
+                return;
+            }
+ 
+            // Removing the minimum distance node
+            // from the priority queue
+            Node u = priorityQueue.remove().node;
+ 
+            // Adding the node whose distance is
+            // finalized
+            if (settled.contains(u)) { 
+                // Continue keyword skips execution for
+                // following check
+                continue;
+            }
+ 
+            // We don't have to call e_Neighbors(u)
+            // if u is already present in the settled set.
+            settled.add(u);
+ 
+            processNeighbours(u);
+        }	
+	}
+	
+	/**
+	 * It processes all the neighbours of the passed node
+	 * @param source Node
+	 */
+    private void processNeighbours(Node source) { 
+        // All the neighbors of v
+        try {
+			for (Edge edge: graph.getOutEdges(source)) {
+				Node target = edge.getTarget();
+ 
+			    // If current node hasn't already been processed
+			    if (!settled.contains(target)) {
+			        int edgeDistance = Integer.parseInt(edge.getLabel()); //TO-DO In this implementation the label may be any other thing, even null
+			        int newDistance = dist.get(source) + edgeDistance;
+ 
+			        // If new distance is cheaper in cost
+			        if (newDistance < dist.get(target)) {
+			            dist.put(target, newDistance);
+			        }
+ 
+			        // Add the current node to the queue
+			        priorityQueue.add(new Cost(target, dist.get(target)));
+			    }
+			}
+		} catch (NumberFormatException | NodeNotFoundException e) {
+			// the node should always be in the graph
+			// The graph should contain the right data at the edges
+			throw new RuntimeException(e);
+		}
+    }
+    
+    /**
+     * It returns the computed distance to the given node
+     * @return Defensive copy of the nodes with the corresponding distances
+     * @throws GraphAlgorithmException If the compute method has not been invoked
+     */
+	public Map<Node, Integer> getComputedDistances() throws GraphAlgorithmException {
+		if (dist == null) {
+			throw new GraphAlgorithmException("Compute has not been invoked first");
+		}
+		Map<Node, Integer> result = new HashMap<>();
+		for (Map.Entry<Node, Integer> entry: dist.entrySet()) {
+			result.put(new Node(entry.getKey()), entry.getValue());
+		}
+		return result;
+	}	
+    
+    
+}
+package es.ua.dlsi.prog3.p6.algorithms;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
+
+import es.ua.dlsi.prog3.p6.graph.Edge;
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.IIdentifiable;
+import es.ua.dlsi.prog3.p6.graph.Node;
+
+/**
+ * It exports a graph to DOT format used by GraphViz.
+ * Package visibility for force clients using the facade Algorithms class
+ * @author drizo
+ */
+class DotExporter {
+	/**
+	 * Used to avoid creating the same object several times
+	 */
+	private static final String EMPTY_STRING = "";
+
+	/**
+	 * DOT requires ids starting with an alphabetic character
+	 * @param uniqueID Object implementing this interface
+	 * @return Normalized ID for DOT
+	 */
+	private String generateDotID(IIdentifiable uniqueID) {
+		return "s" + uniqueID.getUniqueID(); 
+	}
+	
+	/**
+	 * Used to replace any " for \" in the string
+	 * @param label Label to be escaped. It may be null
+	 * @return New string
+	 */
+	private String escapeLabel(String label) {
+		if (label == null) {
+			return EMPTY_STRING;
+		} else {
+			return label.replaceAll("\"","\\\"");
+		}
+	}
+	
+	/**
+	 * It prints all nodes of the graph
+	 * @param os Output stream
+	 * @param graph Graph to be printed
+	 */
+    private void printNodes(PrintStream os, Graph graph) {
+    	for (Node node: graph.getNodes()) {
+    		if (node.getLabel() == null) {
+    			os.println(generateDotID(node) + "[shape=circle];");
+    		} else {
+    			String escapedLabel = escapeLabel(node.getLabel().toString());
+    			os.println(generateDotID(node) + "[label=\"" +escapedLabel + "\", shape=circle];");
+    		}
+    	}
+    }
+
+    /**
+     * Out writes all edges in the graph
+     * @param os Output stream
+     * @param graph The graph to be exported 
+     */
+    private void printEdges(PrintStream os, Graph graph) {
+    	for (Edge edge: graph.getEdges()) {
+    		String label = EMPTY_STRING;
+    		if (edge.getLabel() != null) {
+    			String escapedEdgeLabel = escapeLabel(edge.getLabel().toString());
+    			label = "[label=\"" + escapedEdgeLabel + "\"]";
+    		}
+    		os.println(generateDotID(edge.getSource()) 
+    				+ "->" 
+    				+ generateDotID(edge.getTarget()) 
+    				+ label);
+    	}    	
+    }
+
+    /**
+     * It exports the graph in the given file
+     * @param file Output file
+     * @param graph Graph to be exported
+     * @throws FileNotFoundException When the file to be written cannot be found
+     */
+    public void export(File file, Graph graph) throws FileNotFoundException {
+        PrintStream os = new PrintStream(new FileOutputStream(file));
+        os.println("digraph prog3 {");
+
+        printNodes(os, graph);
+        printEdges(os, graph);
+        os.println("}");
+
+        if (os != null) {
+            os.close();
+        }
+    }
+}
+package es.ua.dlsi.prog3.p6.algorithms;
+
+/**
+ * General purpose exception launched by any library algorithm
+ * @author drizo
+ */
+public class GraphAlgorithmException extends Exception {
+	/**
+	 * It avoids Eclipse warning
+	 */
+	private static final long serialVersionUID = 8464139128561353111L;
+
+	/**
+	 * Constructor
+	 * @param message Exception message
+	 */
+	public GraphAlgorithmException(String message) {
+		super(message);
+	}
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * It represents an edge between nodes. Note that there may exist several edges linking the same two nodes
+ * @author drizo
+ */
+public class Edge extends GraphObject {
+	/**
+	 * The origin of the edge
+	 */
+	private Node source;
+	/**
+	 * The end of the edge
+	 */
+	private Node target;
+	/**
+	 * Package visibility because only Graph must be able to create it.
+	 * @param id Unique id
+	 * @param source Origin of the edge
+	 * @param label The content that will be stored in the label
+	 * @param target Destination of the edge
+	 */
+	Edge(int id, Node source, String label, Node target) {
+		super(id, label);
+		if (source == null) {
+			throw new IllegalArgumentException("Missing source");
+		}
+		this.source = source;
+		if (target == null) {
+			throw new IllegalArgumentException("Missing target");
+		}
+		this.target = target;
+	}
+	/**
+	 * Copy constructor. Package visibility because only Graph must be able to create it.
+	 * @param edge Edge to be copied
+	 */	
+	Edge(Edge edge) {
+		super(edge);
+		this.source = edge.source; // it's not required to check of it is null because the other edge is already valid
+		this.target = edge.target;
+	}	
+	/**
+	 * Getter
+	 * @return Source node
+	 */
+	public Node getSource() {
+		return source;
+	}
+
+
+	/**
+	 * Getter
+	 * @return Target node
+	 */
+	public Node getTarget() {
+		return target;
+	}
+	
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		Edge other = (Edge) obj;
+		if (source == null) {
+			if (other.source != null)
+				return false;
+		} else if (!source.equals(other.source))
+			return false;
+		if (target == null) {
+			if (other.target != null)
+				return false;
+		} else if (!target.equals(other.target))
+			return false;
+		return true;
+	}
+
+	@Override
+	public String toString() {
+		return source.toString() + " [" + (label != null ? label : "") + "] " + target.toString();
+	}
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Directed graph class
+ * @author drizo
+ */
+public class Graph {
+	/**
+	 * All the nodes in the graph
+	 */
+	private Set<Node> nodes;
+
+	/**
+	 * All the edges in the graph
+	 * Key = source node, key = edge
+	 */
+	private Map<Node, Set<Edge>> edges;
+	
+	/**
+	 * Default constructor, it initializes the nodes and edges collections
+	 */
+	public Graph() {
+		this.nodes = new HashSet<>();
+		this.edges = new HashMap<>();
+	}	
+	
+	/**
+	 * It creates a new node and adds it to the set of graph nodes
+	 * @param nodeLabel Label of the new node
+	 * @return The created node
+	 */
+	public Node addNode(String nodeLabel) {
+		Node node = new Node(IDGenerator.getInstance().getNextID(), nodeLabel);
+		nodes.add(node);
+		edges.put(node, new HashSet<>()); 
+		return node;
+	}
+	
+	/**
+	 * It creates a new edge and adds it to the set of graph edges
+	 * @param source Add edge from this node
+	 * @param edgeLabel Label of the new edge
+	 * @param target Add edge to this node
+	 * @return The created node
+	 * @throws NodeNotFoundException It can only happen if one of the provided nodes belongs to other graph
+	 */
+	public Edge addEdge(Node source, String edgeLabel, Node target) throws NodeNotFoundException {
+		if (!this.edges.containsKey(source)) {
+			throw new NodeNotFoundException(source); 
+		}
+
+		if (!this.nodes.contains(target)) {
+			throw new NodeNotFoundException(target);
+		}
+		
+		Edge edge = new Edge(IDGenerator.getInstance().getNextID(), source, edgeLabel, target);
+		Set<Edge> nodeOutEdges = this.edges.get(source);
+		nodeOutEdges.add(edge);
+		return edge;
+	}
+		
+	/**
+	 * It creates a new edge with empty label and adds it to the set of graph edges
+	 * @param source Add edge from this node
+	 * @param target Add edge to this node
+	 * @return The created node
+	 * @throws NodeNotFoundException It can only happen if one of the provided nodes belongs to other graph
+	 */
+	public Edge addEdge(Node source, Node target) throws NodeNotFoundException{
+		return addEdge(source, null, target);
+	}	
+	/**
+	 * Getter
+	 * @return Defensive copy of the nodes
+	 */
+	public Set<Node> getNodes() {
+		HashSet<Node> result = new HashSet<>();
+		for (Node node: nodes) {
+			result.add(new Node(node));
+		}
+		return result;
+	}
+
+	
+	/**
+	 * Getter
+	 * @return Defensive / deep copy of the edges
+	 */
+	public Set<Edge> getEdges() {
+		HashSet<Edge> result = new HashSet<>();
+		for (Set<Edge> nodeEdges: edges.values()) {
+			result.addAll(deepCopy(nodeEdges));
+		}
+		return result;
+	}
+	
+	/**
+	 * It creates a deep copy of the provided set of edges
+	 * @param set Edge set to be copied
+	 * @return Deep clone of the set
+	 */
+	private Set<Edge> deepCopy(Set<Edge> set) {
+		HashSet<Edge> result = new HashSet<>();
+		for (Edge edge: set) {
+			result.add(new Edge(edge));
+		}
+		return result;		
+	}
+	
+	/**
+	 * It returns all the edges (defensive copy) that have the node as source or target
+	 * @param node Node of the graph
+	 * @return Set of edges
+	 * @throws NodeNotFoundException When the node does not belong to this graph
+	 */
+	public Set<Edge> getEdgesConnectedTo(Node node) throws NodeNotFoundException {
+		if (!nodes.contains(node)) {
+			throw new NodeNotFoundException(node);
+		}
+		HashSet<Edge> result = new HashSet<>();
+		Set<Edge> allEdges = this.getEdges();
+		for (Edge edge: allEdges) {
+			if (edge.getSource().getUniqueID() == node.getUniqueID() 
+					|| edge.getTarget().getUniqueID() == node.getUniqueID()) {
+				result.add(new Edge(edge));
+			}
+		}
+		return result;		
+	}
+	
+	/**
+	 * It returns all the edges (defensive copy)  that have this node as source
+	 * @param node Node of the graph
+	 * @return Set of edges, empty if none is found
+	 * @throws NodeNotFoundException When the node does not belong to this graph
+	 */
+	public Set<Edge> getOutEdges(Node node) throws NodeNotFoundException {		
+		if (!edges.containsKey(node)) {
+			throw new NodeNotFoundException(node);
+		}
+		
+		return deepCopy(edges.get(node));
+	}
+	
+	/**
+	 * It returns the number of nodes
+	 * @return Number of nodes
+	 */
+	public int getSize() {
+		return nodes.size();
+	}
+
+	/**
+	 * It checks the node exists in the graph
+	 * @param fromNode Node to be searched
+	 * @return True if exists
+	 */
+	public boolean contains(Node fromNode) {
+		return nodes.contains(fromNode);
+	}
+	
+	/**
+	 * It checks the node has edges
+	 * @return False it the edges set is empty
+	 */
+	public boolean hasEdges() {
+		return !edges.isEmpty();
+	}	
+	
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * Used for generalizing nodes and graphs. Both use labels and a unique ID
+ * @author drizo
+ */
+public abstract class GraphObject implements IIdentifiable {
+	/**
+	 * Unique identifier of the node. 
+	 * At least it must be present in the hashCode for distinguishing between nodes with the same label
+	 */
+	protected  final int uniqueID;
+
+	/**
+	 * Label of the element
+	 */
+	protected String label;
+
+	/**
+	 * Constructor with ID and label
+	 * @param uniqueID Unique ID
+	 * @param label Label
+	 */
+	protected GraphObject(int uniqueID, String label) {
+		super();
+		this.uniqueID = uniqueID;
+		this.label = label;
+	}
+	
+	/**
+	 * Copy constructor. Used usually for dealing with compositions and defensive copy
+	 * @param other Object to be copied
+	 */
+	protected GraphObject(GraphObject other) {
+		this.uniqueID = other.uniqueID;
+		this.label = other.label;
+	}
+
+	/**
+	 * Constructor with empty label
+	 * @param uniqueID Unique ID
+	 */
+	protected GraphObject(int uniqueID) {
+		this(uniqueID, null);
+	}
+	
+	/**
+	 * Getter
+	 * @return id
+	 */
+	@Override
+	public int getUniqueID() {
+		return uniqueID;
+	}
+	
+	/**
+	 * Getter
+	 * @return the label
+	 */
+	public String getLabel() {
+		return label;
+	}
+
+	/**
+	 * Setter
+	 * @param label New label content
+	 */
+	public void setLabel(String label) {
+		this.label = label;
+	}
+		
+	/**
+	 * Only the uniqueID is used to avoid problems with label changes
+	 */
+	@Override
+	public int hashCode() {
+		final int prime = 31;
+		int result = 1;
+		result = prime * result + uniqueID;
+		return result;
+	}	
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * This singleton class is responsible of generating a unique ID
+ * @author drizo
+ */
+public class IDGenerator {
+	/**
+	 * Unique ID sequence
+	 */
+	private int nextID; 
+	/**
+	 * Singleton class variable
+	 */
+	private static IDGenerator instance;
+	
+	/**
+	 * Private to avoid being instantiated by a client class
+	 */
+	private IDGenerator() {
+		nextID = 1;
+	}
+	
+	/**
+	 * Singleton entry method
+	 * @return Static instance
+	 */
+	public static IDGenerator getInstance() {
+		if (instance == null) {
+			instance = new IDGenerator();
+		}
+		return instance;
+	}
+	
+	/**
+	 * It returns a unique ID
+	 * @return Next id
+	 */
+	public int getNextID() {
+		return nextID++;
+	}
+
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * It guarantees the object has a unique ID
+ * @author drizo
+ *
+ */
+public interface IIdentifiable {
+	int getUniqueID();
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * String node 
+ * @author drizo
+ */
+public class Node extends GraphObject {
+	/**
+	 * Constructor from label. 
+	 * Package visibility because only Graph must be able to create it.
+	 * @param id Unique identifier of the node
+	 * @param label Content for the label
+	 */
+	Node(int id, String label) {
+		super(id, label);
+	}
+	/**
+	 * Copy constructor. Public visibility because algorithms may use it
+	 * @param node Node to be copied
+	 */	
+	public Node(Node node) {
+		super(node);
+	}
+	
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		Node other = (Node) obj;
+		if (label == null) {
+			if (other.label != null)
+				return false;
+		} else if (!label.equals(other.label))
+			return false;		
+		if (uniqueID != other.uniqueID)
+			return false;
+		return true;
+	}
+
+	@Override
+	public String toString() {
+		return "node " + (label != null ? label : "") + "), ID = " + this.uniqueID; 
+	}
+	
+	
+}
+package es.ua.dlsi.prog3.p6.graph;
+
+/**
+ * Thrown when a node does not belong to the graph
+ * @author drizo
+ */
+public class NodeNotFoundException extends Exception {
+	/**
+	 * Avoids Eclipse serialization warning
+	 */
+	private static final long serialVersionUID = -1565977518844974853L;
+	/**
+	 * Erroneous node
+	 */
+	private final Node node;
+
+	/**
+	 * It initializes the message using the node
+	 * @param node Erroneous node
+	 */
+	public NodeNotFoundException(Node node) {
+		super("Node " + node + " not found");
+		this.node = node;
+	}
+
+	/**
+	 * Getter
+	 * @return Erroneous node
+	 */
+	public Node getNode() {
+		return node;
+	}
+}
+package es.ua.dlsi.prog3.p6.network;
+
+/**
+ * Computer device
+ */
+public class Computer extends Device {
+	/**
+	 * Computer device constructor
+	 * @param name Device name
+	 * @param address Network address
+	 */
+	public Computer(String name, String address) {
+		super(name, address);
+	}
+
+}
+package es.ua.dlsi.prog3.p6.network;
+
+/**
+ * Base network device.
+ */
+public abstract class Device implements Comparable<Device> {
+	/**
+	 * Name of the device
+	 */
+	private String name;
+	/**
+	 * Address of the device
+	 */
+	private String address;
+	/**
+	 * Constructor
+	 * @param name Name of the device
+	 * @param address Address of the device
+	 */
+	public Device(String name, String address) {
+		this.name = name;
+		this.address = address;
+	}
+	/**
+	 * Getter
+	 * @return Name of the device
+	 */
+	public String getName() {
+		return name;
+	}
+	/**
+	 * Getter
+	 * @return Address of the device
+	 */
+	public String getAddress() {
+		return address;
+	}
+	@Override
+	public int hashCode() {
+		final int prime = 31;
+		int result = 1;
+		result = prime * result + ((address == null) ? 0 : address.hashCode());
+		result = prime * result + ((name == null) ? 0 : name.hashCode());
+		return result;
+	}
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		Device other = (Device) obj;
+		if (address == null) {
+			if (other.address != null)
+				return false;
+		} else if (!address.equals(other.address))
+			return false;
+		if (name == null) {
+			if (other.name != null)
+				return false;
+		} else if (!name.equals(other.name))
+			return false;
+		return true;
+	}
+	@Override
+	public String toString() {
+		return name + "[" + address + "]";
+	}
+
+	@Override
+	public int compareTo(Device o) {
+		int cn = name.compareTo(o.name);
+		if (cn == 0) {
+			return address.compareTo(o.address);
+		} else {
+			return cn;
+		}
+	}
+}
+package es.ua.dlsi.prog3.p6.network;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.text.DecimalFormat;
+import java.util.*;
+
+import es.ua.dlsi.prog3.p6.algorithms.Algorithms;
+import es.ua.dlsi.prog3.p6.algorithms.GraphAlgorithmException;
+import es.ua.dlsi.prog3.p6.algorithms.ICostOperators;
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.Node;
+import es.ua.dlsi.prog3.p6.graph.NodeNotFoundException;
+
+public class Network {
+	/**
+	 * Devices map with latencies between devices
+	 */
+	private Graph<Device, Double> graph;
+	
+	/**
+	 * Graph node corresponding to each device
+	 */
+	private Map<Device, Node<Device>> deviceNodes;
+
+	/**
+	 * Default constructor
+	 */
+	public Network() {
+		this.graph = new Graph<>();
+		this.deviceNodes = new HashMap<>();
+	}
+	
+	/**
+	 * It adds a device to the network
+	 * @param device
+	 */
+	public void addDevice(Device device) {
+		Node<Device> node = this.graph.addNode(device);
+		this.deviceNodes.put(device, node);
+	}
+	
+	/**
+	 * Internal method to retrieve the node associated to the device 
+	 * @param device Network device
+	 * @return Node associated to the device. Always not null
+	 */
+	private Node<Device> getNode(Device device) {
+		Node<Device> result = deviceNodes.get(device);
+		if (result == null) {
+			// this message should never be thrown as we use this method internally and all devices are added to the deviceNodes map
+			throw new RuntimeException("Cannot find device " + device); 
+		}
+		return result;
+	}
+	
+	/**
+	 * Adds a latency measurement to the network
+	 * @param fromDevice Source device
+	 * @param toDevice Target device
+	 * @param milliseconds Latency measured in milliseconds
+	 */
+	public void addLatency(Device fromDevice, Device toDevice, Double milliseconds) {
+		Node<Device> fromNode = getNode(fromDevice);
+		Node<Device> toNode = getNode(toDevice);
+		
+		try {
+			this.graph.addEdge(fromNode, milliseconds, toNode);
+		} catch (NodeNotFoundException e) {
+			throw new RuntimeException(e); // this should never happen
+		}
+	}
+	
+	/**
+	 * It prints the network using a GraphViz DOT format
+	 * @param file Output file
+	 * @throws FileNotFoundException If the file cannot be written
+	 */
+	public void printNetwork(File file) throws FileNotFoundException {
+		Algorithms.exportDot(file, graph);
+	}
+
+	/**
+	 * Inner class
+	 */
+	public static class Latency implements Comparable<Latency> {
+		/**
+		 * From device
+		 */
+		private Device source;
+		/**
+		 * To device
+		 */
+		private Device target;
+		/**
+		 * Time to reach the target device from the source device
+		 */
+		private double time;
+
+		/**
+		 * Constructor
+		 * @param source From device
+		 * @param target To Device
+		 * @param time Latency
+		 */
+		public Latency(Device source, Device target, double time) {
+			this.source = source;
+			this.target = target;
+			this.time = time;
+		}
+
+		/**
+		 * Getter
+		 * @return Source
+		 */
+		public Device getSource() {
+			return source;
+		}
+		/**
+		 * Getter
+		 * @return Target
+		 */
+		public Device getTarget() {
+			return target;
+		}
+		/**
+		 * Getter
+		 * @return Time
+		 */
+		public double getTime() {
+			return time;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (!(o instanceof Latency)) return false;
+
+			Latency latency = (Latency) o;
+
+			if (Double.compare(latency.time, time) != 0) return false;
+			if (!source.equals(latency.source)) return false;
+			return target.equals(latency.target);
+		}
+
+		@Override
+		public int hashCode() {
+			int result;
+			long temp;
+			result = source.hashCode();
+			result = 31 * result + target.hashCode();
+			temp = Double.doubleToLongBits(time);
+			result = 31 * result + (int) (temp ^ (temp >>> 32));
+			return result;
+		}
+
+		@Override
+		public int compareTo(Latency o) {
+			int from = source.compareTo(o.source);
+			if (from == 0) {
+				return target.compareTo(o.target);
+			} else {
+				return from;
+			}
+		}
+	}
+
+	/**
+	 * It computes the best latencies between all given devices and prints it to the console
+	 * @param devices to be printed latencies sorted
+	 */
+	public SortedSet<Latency> computeLatencyMap(List<Device> devices) {
+		ICostOperators<Double> costOperators = new ICostOperators<Double>() {
+			@Override
+			public Double zero() {
+				return 0.0;
+			}
+
+			@Override
+			public Double maximumValue() {
+				return Double.MAX_VALUE;
+			}
+
+			@Override
+			public Double add(Double a, Double b) {
+				return a+b;
+			}
+		};
+		TreeSet<Latency> result = new TreeSet<>();
+		try {
+			for (Device fromDevice: devices) {
+				Node<Device> fromNode = getNode(fromDevice);
+				for (Device toDevice: devices) {
+					Node<Device> toNode = getNode(toDevice);
+					Double cost = Algorithms.shortestPathCost(graph, fromNode, toNode, costOperators);
+					result.add(new Latency(fromDevice, toDevice, cost));
+				}
+			}
+		} catch (NodeNotFoundException | GraphAlgorithmException exception) {
+			System.err.println("Cannot compute the latency map: " + exception);
+		}
+		return result;
+	}
+
+	/**
+	 * It computes the best latencies between all given devices and prints it to the console
+	 * @param devices to be printed
+	 */
+	public void printLatencyMap(List<Device> devices) {
+		Set<Latency> latencies = computeLatencyMap(devices);
+		System.out.println("From device\tTo device\tLatency");
+	    DecimalFormat formatter = new DecimalFormat("#0.00");
+		for (Latency latency: latencies) {
+				System.out.println(latency.getSource() + "\t" + latency.getTarget() + "\t" + formatter.format(latency.getTime()));
+		}
+	}
+
+	
+	/**
+	 * Example code
+	 * @param args Not used
+	 */
+	public static final void main(String [] args) {
+		Network network = new Network();
+		Computer c1 = new Computer("Computer #1", "192.168.1.2");
+		Computer c2 = new Computer("Computer #2", "192.168.1.32");
+		Router r = new Router("Main router", "192.168.1.1");
+		network.addDevice(c1);
+		network.addDevice(c2);
+		network.addDevice(r);
+		network.addLatency(r, c1, 20.2);
+		network.addLatency(c1, r, 19.6);
+		network.addLatency(r, c2, 11.3);
+		network.addLatency(c2, r, 12.1);
+		network.addLatency(c1, c2, 44.2);
+		network.addLatency(c2, c1, 42.9);
+		
+		List<Computer> computers = Arrays.asList(c1, c2);
+		network.printLatencyMap(computers);
+		
+	}
+}
+package es.ua.dlsi.prog3.p6.network;
+
+/**
+ * Router device
+ */
+public class Router extends Device {
+	/**
+	 * Router device constructor
+	 * @param name Device name
+	 * @param address Network address
+	 */
+	public Router(String name, String address) {
+		super(name, address);
+	}
+
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+import es.ua.dlsi.prog3.p6.reflection.impl.ReflectionUtils;
+
+/**
+ * This class uses reflection to find a class that implements IClassAnalyzer that has a default constructor and instantiates it
+ * @author David Rizo - drizo@dlsi.ua.es
+ * @created 12/11/22
+ */
+public class ClassAnalyzerFactory {
+    /**
+     * Package where the classes will be located
+     */
+    private String packageName;
+
+    /**
+     * Reflection utils
+     */
+    private IReflectionUtils reflectionUtils;
+
+    /**
+     * Constructor
+     * @param packageName Package where the classes will be located
+     */
+    public ClassAnalyzerFactory(String packageName) {
+        this.packageName = packageName;
+        this.reflectionUtils = new ReflectionUtils();
+    }
+
+
+    /**
+     * It locates on the given package and creates a class with name ClassAnalyzer that implements IClassAnalyzer.
+     * @return The instantiated class
+     * @throws ReflectionException When no class is found, it has not a default constructor, or the instantiation has thrown an exception
+     */
+    public IClassAnalyzer create() throws ReflectionException {
+        Class<?> clazz = null;
+        try {
+            clazz = reflectionUtils.findClassInPackage(packageName, "ClassAnalyzer");
+        } catch (ClassNotFoundException e) {
+            throw new ReflectionException(e);
+        }
+
+        if (!reflectionUtils.isImplementingInterface(clazz, IClassAnalyzer.class)) {
+            throw new ReflectionException("The class found with name ClassAnalyzer does not implement IClassAnalyzer");
+        }
+        try {
+            return reflectionUtils.instantiate(clazz);
+        } catch (InstantiationException | IllegalAccessException e) {
+            throw new ReflectionException(e);
+        }
+    }
+
+
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+import es.ua.dlsi.prog3.p6.algorithms.Algorithms;
+import es.ua.dlsi.prog3.p6.graph.Graph;
+import es.ua.dlsi.prog3.p6.graph.Node;
+import es.ua.dlsi.prog3.p6.graph.NodeNotFoundException;
+import es.ua.dlsi.prog3.p6.reflection.impl.ReflectionUtils;
+
+import java.io.File;
+import java.util.*;
+
+/**
+ * This class generates a graph of relations and dependencies starting from a given class
+ * to all the classes it's related in the same package
+ * @author David Rizo - drizo@dlsi.ua.es
+ */
+public class Code2Graph {
+    /**
+     * Source class
+     */
+    private final Class<?> start;
+    /**
+     * Graph<class, relationship type>
+     */
+    private Graph<Class<?>, ERelationship> graph;
+
+    /**
+     * Already visited classes
+     */
+    private HashMap<Class<?>, Node<Class<?>>> visitedClasses;
+
+    /**
+     * Class that analyzes the relations of a given class.
+     * It will be instantiated using reflection by searching on the classpath
+     */
+    private IClassAnalyzer classAnalyzer;
+    /**
+     * The algorithm will work with this starting class
+     * @param start Node from which the graph will be built
+     */
+    public Code2Graph(Class<?> start) {
+        this.start = start;
+    }
+
+    /**
+     * The algorithm will work with this starting class
+     * @param packageName The location of the class
+     * @param className The name of the class
+     * @throws ClassNotFoundException If the class is not found
+     */
+    public Code2Graph(String packageName, String className) throws ClassNotFoundException {
+        IReflectionUtils reflectionUtils = new ReflectionUtils();
+        this.start = reflectionUtils.findClassInPackage(packageName, className);
+    }
+
+    /**
+     * This method is the one that will build the graph
+     * @return The graph with nodes representing classes and edges representing relations between them
+     * @throws ReflectionException If a reflection problem occurs
+     */
+    public Graph<Class<?>, ERelationship> createGraph() throws ReflectionException {
+        return createGraph("es.ua.dlsi.prog3.p6.reflection.impl");
+    }
+
+    /**
+     * This method is the one that will build the graph
+     * @return The graph with nodes representing classes and edges representing relations between them
+     * @throws ReflectionException If a reflection problem occurs
+     */
+    public Graph<Class<?>, ERelationship> createGraph(String reflectionClassesPackage) throws ReflectionException {
+        this.graph = new Graph<>();
+        this.visitedClasses = new HashMap<>();
+        ClassAnalyzerFactory classAnalyzerFactory = new ClassAnalyzerFactory(reflectionClassesPackage);
+        classAnalyzer = classAnalyzerFactory.create();
+        if (classAnalyzer == null) {
+            throw new ReflectionException("No class analyzer is created");
+        }
+        browseClass(start);
+        return graph;
+    }
+
+    /**
+     * This recursive method populates the graph for the given class
+     * @param c Class to be examined
+     * @return The created node in the graph for the given class
+     */
+    private Node<Class<?>> browseClass(Class<?> c) {
+        Node<Class<?>> node = this.visitedClasses.get(c);
+        if (node == null) { // it was not visited
+            node = graph.addNode(c);
+            this.visitedClasses.put(c, node);
+            Class<?> parentClass = findParentClass(c);
+
+            if (parentClass != null) {
+                addRelatedClass(node, parentClass, ERelationship.inheritance);
+            }
+
+            Collection<Class<?>> associations = findAssociatedClasses(c);
+            for (Class<?> associatedClass : associations) {
+                addRelatedClass(node, associatedClass, ERelationship.association);
+            }
+
+            Collection<Class<?>> dependencies = findDependantClasses(c);
+            for (Class<?> dependentClass : dependencies) {
+                addRelatedClass(node, dependentClass, ERelationship.parameterDependency);
+            }
+        }
+
+        return node;
+    }
+
+    /**
+     * Add an edge representing the relationship from two classes
+     * @param node Source node
+     * @param relatedClass The class it's related to
+     * @param relationship The kind of relationship
+     */
+    private void addRelatedClass(Node<Class<?>> node, Class<?> relatedClass, ERelationship relationship) {
+        Node<Class<?>> relatedClassNode = browseClass(relatedClass);
+        try {
+            graph.addEdge(node, relationship, relatedClassNode);
+        } catch (NodeNotFoundException e) {
+            throw new RuntimeException(e); // the node will be always found as we are inserting it
+        }
+    }
+
+    /**
+     * This method is to be implemented by students.
+     * It returns the parent class of a given class
+     * @param c Class to be examined
+     * @return null if it has no parent
+     */
+    private Class<?> findParentClass(Class<?> c) {
+        return classAnalyzer.findParentClass(c);
+    }
+
+    /**
+     * Utility method to check whether the class belongs to the same class as the start class
+     * @return True if they belong to the same package (or if both belong to the default one)
+     */
+    private boolean isSamePackageAsStart(Class<?> c) {
+        if (c != start) {
+            return classAnalyzer.haveSamePackage(start, c);
+        } else {
+            return true;
+        }
+    }
+
+    /**
+     * It just returns the classes that belong to the same package as the "start" property
+     * @param classes Classes to be filtered
+     * @return A new set of classes
+     */
+    private Set<Class<?>> filterClassesInPackage(Set<Class<?>> classes) {
+        HashSet<Class<?>> result = new HashSet<>();
+        for (Class<?> possible: classes) {
+            if (isSamePackageAsStart(possible)) {
+                result.add(possible);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * This method is to be implemented by students.
+     * It returns a collection of classes that are related by a field (associations, compositions, associations) in the class
+     * and belong to the same package as the start one
+     * @param c Class to be examined
+     * @return Set of related classes
+     */
+    private Set<Class<?>> findAssociatedClasses(Class<?> c) {
+        return filterClassesInPackage(classAnalyzer.findAssociatedClasses(c));
+    }
+
+    /**
+     * This method is to be implemented by students.
+     * It returns a collection of classes that are related by a parameter of a method or constructor in the class
+     * and belong to the same package as the start one
+     * @param c Class to be examined
+     * @return Set of related classes
+     */
+    private Set<Class<?>> findDependantClasses(Class<?> c) {
+        return filterClassesInPackage(classAnalyzer.findDependantClasses(c));
+    }
+
+    /**
+     * Main method
+     * @param args Parameters
+     */
+    public static final void main(String [] args) {
+        if (args.length != 3) {
+            System.err.println("Use: es.ua.dlsi.prog3.p6.reflection.Code2Graph <package> <source class name> <output DOT file>");
+        } else {
+            try {
+                Code2Graph code2Graph = new Code2Graph(args[0], args[1]);
+                Graph<Class<?>, ERelationship> graph = code2Graph.createGraph();
+                Algorithms.exportDot(new File(args[2]), graph);
+            } catch (Throwable t) {
+                System.err.println("Cannot generate the graph from code: " + t.getMessage());
+            }
+        }
+
+    }
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+/**
+ * Types of relationships between classes
+ * @author David Rizo - drizo@dlsi.ua.es
+ * @created 7/11/22
+ */
+public enum ERelationship {
+    inheritance,
+    association,
+    parameterDependency
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * This interface represents the methods required to analyze the class relationshipts
+ * @author David Rizo - drizo@dlsi.ua.es
+ * @created 12/11/22
+ */
+public interface IClassAnalyzer {
+    /**
+     * It returns the parent class of a given class
+     * @param c The class to be analyzed
+     * @return null if the class has no parent class, or the parent class elsewhere.
+     */
+    Class<?> findParentClass(Class<?> c);
+
+    /**
+     * It checks whether both classes belong to the same package
+     * @param a First class
+     * @param b Second class
+     * @return True if the package of both classes is exactly the same
+     */
+    boolean haveSamePackage(Class<?> a, Class<?> b);
+
+    /**
+     * It browses the declared fields of class to return their classes.
+     * @param c The class to be analyzed
+     * @return Set (not repeated values) of classes
+     */
+    Set<Class<?>> findAssociatedClasses(Class<?> c);
+
+    /**
+     * It browses the declared methods and constructors of the class to return the classes of the parameters and return values
+     * @param c The class to be analyzed
+     * @return Set (not repeated values) of classes
+     */
+    Set<Class<?>> findDependantClasses(Class<?> c);
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+/**
+ * It declares some methods that access to the JVM by using the reflection mechanish
+ * @author David Rizo - drizo@dlsi.ua.es
+ * @created 12/11/22
+ */
+public interface IReflectionUtils {
+    /**
+     * It creates the object of the class using the default constructor. It cannot be created with new because it can be replaced by any other class in the future
+     * @param classToBeInstantiated
+     * @throws InstantiationException The constructor has thrown an exception
+     * @throws IllegalAccessException The visibility of the constructor or the class does not allow to create it
+     * @return An object of the parametrized type
+     */
+	public <T> T instantiate(Class<?> classToBeInstantiated) throws InstantiationException, IllegalAccessException;
+
+    /**
+     * It finds the class with the given name in the package with the name provided
+     * @param packageName Package name
+     * @param name Class name (without package)
+     * @return Metaclass
+     * @throws ClassNotFoundException When no class is found with these characteristics
+     */
+    Class<?> findClassInPackage(String packageName, String name) throws ClassNotFoundException;
+
+    /**
+     * It tests if a class implements an interface
+     * @param clazz Class to be checked
+     * @param interfaceClass The metaclass of the interface to be checked to be implemented by clazz
+     * @return True If the interface is assignable from clazz, i.e., clazz implements the interface
+     */
+    public boolean isImplementingInterface(Class<?> clazz, Class<?> interfaceClass);
+}
+package es.ua.dlsi.prog3.p6.reflection;
+
+/**
+ * Used to unify all exceptions thrown by the reflection mechanism
+ * @author David Rizo - drizo@dlsi.ua.es
+ * @created 12/11/22
+ */
+public class ReflectionException extends Exception {
+    /**
+     * Constructor
+     * @param message The message
+     */
+    public ReflectionException(String message) {
+        super(message);
+    }
+
+    /**
+     * Constructor
+     * @param cause Wrapped exception
+     */
+    public ReflectionException(Throwable cause) {
+        super(cause);
+    }
+}
+package es.ua.dlsi.prog3.p6.reflection.impl;
+
+import es.ua.dlsi.prog3.p6.reflection.IClassAnalyzer;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Just findDependantClasses has been included. The other methods have to be done by students. 
+ */
+public class ClassAnalyzer implements IClassAnalyzer {
+    @Override
+    public Set<Class<?>> findDependantClasses(Class<?> c) {
+        HashSet<Class<?>> result = new HashSet<>();
+        for (Method method: c.getDeclaredMethods()) {
+            Class<?> returnType = method.getReturnType();
+            result.add(returnType);
+            for (Class<?> paramType: method.getParameterTypes()) {
+                    result.add(paramType);
+            }
+        }
+
+        for (Constructor<?> method: c.getConstructors()) {
+            for (Class<?> paramType : method.getParameterTypes()) {
+                result.add(paramType);
+            }
+        }
+        return result;
+    }
+}
+package es.ua.dlsi.prog3.p6.reflection.impl;
+
+import es.ua.dlsi.prog3.p6.reflection.IClassAnalyzer;
+import es.ua.dlsi.prog3.p6.reflection.IReflectionUtils;
+
+/**
+ * To be done by students
+ */
+public class ReflectionUtils implements IReflectionUtils {
+
+}
